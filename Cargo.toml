@@ -13,6 +13,11 @@ thiserror = "2"
 chrono = "0.4"
 rand = "0.9"
 md5 = "0.7"
+base64 = "0.22"
+aes = "0.8"
+ecb = { package = "ecb", version = "0.1" }
+cipher = "0.4"
+urlencoding = "2"
 qrcode = "0.14"
 image = "0.25"
 

@@ -2,14 +2,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use aes::Aes128;
+use base64::Engine;
+use cipher::{BlockEncryptMut, KeyInit};
+use ecb::Encryptor;
 use image::Luma;
-use qrcode::render::unicode::Dense1x2;
 use qrcode::QrCode;
 
 use crate::client::ApiClient;
 use crate::config::AppConfig;
 use crate::error::AppResult;
-use crate::model::{ApiResponse, CreateSignData, CreateSignRequest, PreviewData, PreviewRequest};
+use crate::model::{
+    ApiResponse, CreateSignData, CreateSignRequest, PayMiddleInfo, PreviewData, PreviewRequest,
+};
 
 pub async fn poll_preview(
     client: &ApiClient,
@@ -38,7 +43,7 @@ pub async fn poll_preview(
 
     let now = chrono::Local::now().format("%H:%M:%S%.3f");
     let status = if sold_out { "sold out" } else { "in stock" };
-    println!("[{now}] #{attempt_id} | {status} | bizId: {biz_id:?} | {cost_ms}ms");
+    println!("[{now}] {} #{attempt_id} | {status} | bizId: {biz_id:?} | {cost_ms}ms", config.name);
 
     if let Some(id) = biz_id {
         if !sold_out && !success.swap(true, Ordering::SeqCst) {
@@ -49,6 +54,7 @@ pub async fn poll_preview(
     Ok(None)
 }
 
+#[allow(dead_code)]
 pub async fn create_sign(client: &ApiClient, config: &AppConfig, biz_id: &str) -> AppResult<()> {
     let url = format!("{}/create-sign", config.base_url);
     let payload = CreateSignRequest {
@@ -63,11 +69,8 @@ pub async fn create_sign(client: &ApiClient, config: &AppConfig, biz_id: &str) -
 
     if resp.code == Some(200) {
         if let Some(sign_url) = resp.data.and_then(|d| d.sign) {
-            println!("\n{}", "=".repeat(50));
-            render_qrcode_terminal(&sign_url);
             println!("pay url: {sign_url}");
-            save_qrcode_image(&sign_url);
-            println!("{}", "=".repeat(50));
+            save_qrcode_image(&sign_url, &config.name);
             return Ok(());
         }
     }
@@ -76,25 +79,58 @@ pub async fn create_sign(client: &ApiClient, config: &AppConfig, biz_id: &str) -
     Ok(())
 }
 
-fn render_qrcode_terminal(url: &str) {
-    let code = match QrCode::new(url.as_bytes()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("qrcode encode error: {e}");
-            return;
-        }
+/// 生成 pay-middle-page URL 并保存二维码图片
+pub fn pay_middle(config: &AppConfig, biz_id: &str) {
+    let pay_type = match config.pay_type.as_str() {
+        "ALI" => "alipay",
+        "WE_CHAT" => "wechat",
+        other => other,
     };
 
-    let unicode_str = code
-        .render::<Dense1x2>()
-        .dark_color(Dense1x2::Dark)
-        .light_color(Dense1x2::Light)
-        .quiet_zone(true)
-        .build();
-    println!("\n{unicode_str}\n");
+    let info = PayMiddleInfo {
+        product_id: config.product_id.clone(),
+        product_name: String::new(),
+        amount: String::new(),
+        customer_id: config.customer_id.clone(),
+        customer_name: String::new(),
+        old_product_id: String::new(),
+        agreement_no: String::new(),
+        is_subscribe: false,
+        biz_id: biz_id.to_string(),
+        pay_type: pay_type.to_string(),
+        user_state: "NORMAL".to_string(),
+        ic: config.invitation_code.clone(),
+    };
+
+    let json = serde_json::to_string(&info).expect("serialize PayMiddleInfo");
+    let encrypted = aes_ecb_encrypt(&json);
+    let encoded = urlencoding::encode(&encrypted);
+    let url = format!("https://www.bigmodel.cn/pay-middle-page?info={encoded}");
+
+    println!("\n{}", "=".repeat(50));
+    println!("[{}] pay middle page ready!", config.name);
+    save_qrcode_image(&url, &config.name);
+    println!("{}", "=".repeat(50));
 }
 
-fn save_qrcode_image(url: &str) {
+/// AES-128-ECB + PKCS7 加密，输出 Base64
+fn aes_ecb_encrypt(plaintext: &str) -> String {
+    const KEY: &[u8; 16] = b"zhiPuAi123456789";
+    let mut data = plaintext.as_bytes().to_vec();
+
+    // PKCS7 padding
+    let pad_len = 16 - (data.len() % 16);
+    data.extend(std::iter::repeat(pad_len as u8).take(pad_len));
+
+    let enc = Encryptor::<Aes128>::new(KEY.into());
+    for chunk in data.chunks_exact_mut(16) {
+        enc.clone().encrypt_block_mut(chunk.into());
+    }
+
+    base64::engine::general_purpose::STANDARD.encode(&data)
+}
+
+fn save_qrcode_image(url: &str, username: &str) {
     let code = match QrCode::new(url.as_bytes()) {
         Ok(c) => c,
         Err(e) => {
@@ -108,7 +144,7 @@ fn save_qrcode_image(url: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let filename = format!("pay_{ts}.png");
+    let filename = format!("pay_{username}_{ts}.png");
     match img.save(&filename) {
         Ok(()) => {
             let abs = std::path::Path::new(&filename)

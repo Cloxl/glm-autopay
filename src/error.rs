@@ -8,6 +8,8 @@ pub enum AppError {
     InvalidHeader(String),
     #[error("invalid pay type: {0}, expected ALI or WE_CHAT")]
     InvalidPayType(String),
+    #[error("setup error: {0}")]
+    Setup(String),
     #[error(transparent)]
     Http(#[from] wreq::Error),
     #[error(transparent)]

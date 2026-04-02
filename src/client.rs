@@ -25,14 +25,8 @@ impl ApiClient {
         );
         headers.insert(COOKIE, header_value(&config.cookie)?);
         headers.insert("authorization", header_value(&config.auth_token)?);
-        headers.insert(
-            "bigmodel-organization",
-            HeaderValue::from_static("org-583867d3f6994298908000F995870b6a"),
-        );
-        headers.insert(
-            "bigmodel-project",
-            HeaderValue::from_static("proj_2fFEA9d9c35B4408A1C72206C32a0354"),
-        );
+        headers.insert("bigmodel-organization", header_value(&config.bigmodel_organization)?);
+        headers.insert("bigmodel-project", header_value(&config.bigmodel_project)?);
         headers.insert(ORIGIN, HeaderValue::from_static("https://www.bigmodel.cn"));
         headers.insert(REFERER, HeaderValue::from_static("https://www.bigmodel.cn/glm-coding"));
 
@@ -44,6 +38,7 @@ impl ApiClient {
         Ok(Self { inner, config })
     }
 
+    #[allow(dead_code)]
     pub async fn post_text<T: Serialize + ?Sized>(&self, url: &str, body: &T) -> AppResult<String> {
         let text = self.inner.post(url).json(body).send().await?.text().await?;
         Ok(text)

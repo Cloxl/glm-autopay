@@ -3,29 +3,62 @@ mod client;
 mod config;
 mod error;
 mod model;
+mod setup;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use client::ApiClient;
-use config::AppConfig;
+use config::GlobalConfig;
 use error::AppResult;
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
     init_console();
 
-    let config = AppConfig::load()?;
+    // --setup: 交互式引导
+    if std::env::args().any(|a| a == "--setup") {
+        return setup::run_setup().await;
+    }
+
+    let global = GlobalConfig::load()?;
+    let configs = global.into_app_configs()?;
+
+    // --test: 每个用户生成一张测试二维码
+    if std::env::args().any(|a| a == "--test") {
+        println!("=== TEST MODE ===\n");
+        for cfg in &configs {
+            println!("generating test qrcode for: {}", cfg.name);
+            api::pay::pay_middle(cfg, "TEST_BIZ_ID_000000");
+            println!();
+        }
+        return Ok(());
+    }
+
+    // 每个用户独立并发轮询
+    println!("rps: {}/user", configs[0].rps);
+    for cfg in &configs {
+        println!("  {} -> {} ({})", cfg.name, cfg.product_id, cfg.pay_type.as_str());
+    }
+    println!();
+
+    let mut user_handles = Vec::new();
+    for cfg in configs {
+        user_handles.push(tokio::spawn(run_user(cfg)));
+    }
+
+    for h in user_handles {
+        if let Err(e) = h.await.unwrap() {
+            eprintln!("user task error: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_user(config: config::AppConfig) -> AppResult<()> {
     let client = ApiClient::new(config.clone())?;
-
-    println!(
-        "target: {} | pay: {} | rps: {}",
-        config.product_id,
-        config.pay_type.as_str(),
-        config.rps,
-    );
-
     let success = Arc::new(AtomicBool::new(false));
     let mut attempt: usize = 0;
 
@@ -43,12 +76,10 @@ async fn main() -> AppResult<()> {
             handles.push(tokio::spawn(async move {
                 match api::pay::poll_preview(&client, &config, id, &success).await {
                     Ok(Some(biz_id)) => {
-                        if let Err(e) = api::pay::create_sign(&client, &config, &biz_id).await {
-                            eprintln!("create-sign error: {e}");
-                        }
+                        api::pay::pay_middle(&config, &biz_id);
                     }
                     Err(e) => {
-                        eprintln!("preview error: {e}");
+                        eprintln!("[{}] preview error: {e}", config.name);
                     }
                     _ => {}
                 }
@@ -71,11 +102,8 @@ async fn main() -> AppResult<()> {
 
 #[cfg(windows)]
 fn init_console() {
-    use std::os::windows::ffi::OsStrExt;
     unsafe {
-        // SetConsoleOutputCP(65001) - UTF-8
         windows_sys::Win32::System::Console::SetConsoleOutputCP(65001);
-        // Enable virtual terminal processing for ANSI escape codes
         let handle = windows_sys::Win32::System::Console::GetStdHandle(
             windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE,
         );
