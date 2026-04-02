@@ -1,0 +1,26 @@
+[package]
+name = "glm-autopay"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+wreq = { version = "6.0.0-rc.28", features = ["json"] }
+wreq-util = "3.0.0-rc.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = "0.4"
+rand = "0.9"
+md5 = "0.7"
+qrcode = "0.14"
+image = "0.25"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = 3
