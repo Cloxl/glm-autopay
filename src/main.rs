@@ -30,7 +30,32 @@ async fn main() -> AppResult<()> {
         println!("=== TEST MODE ===\n");
         for cfg in &configs {
             println!("generating test qrcode for: {}", cfg.name);
-            api::pay::pay_middle(cfg, "TEST_BIZ_ID_000000");
+            let test_preview = model::PreviewData {
+                product_id: Some(cfg.product_id.clone()),
+                sold_out: Some(false),
+                biz_id: Some("TEST_BIZ_ID_000000".to_string()),
+                delay: None,
+                effective_time: None,
+                original_amount: None,
+                pay_amount: Some(49.0),
+                cash_amount: None,
+                give_amount: None,
+                third_party_amount: Some(49.0),
+                refund_amount: None,
+                residual_amount: None,
+                renew_amount: None,
+                has_first_time_subscription_promo: None,
+                renew: Some(false),
+                order_value_composition_feature_enabled: None,
+                product_big_title: None,
+                product_small_title: None,
+                product_name: Some("Pro".to_string()),
+                product_introduction: None,
+                campaign_discount_details: None,
+                refund_breakdown: None,
+                last_subscription_summary: None,
+            };
+            api::pay::pay_middle(cfg, &test_preview);
             println!();
         }
         return Ok(());
@@ -75,8 +100,15 @@ async fn run_user(config: config::AppConfig) -> AppResult<()> {
 
             handles.push(tokio::spawn(async move {
                 match api::pay::poll_preview(&client, &config, id, &success).await {
-                    Ok(Some(biz_id)) => {
-                        api::pay::pay_middle(&config, &biz_id);
+                    Ok(Some(preview)) => {
+                        if std::env::args().any(|a| a == "--mid") {
+                            api::pay::pay_middle(&config, &preview);
+                        } else {
+                            let biz_id = preview.biz_id.as_deref().unwrap_or("");
+                            if let Err(e) = api::pay::create_sign(&client, &config, biz_id).await {
+                                eprintln!("[{}] create-sign error: {e}", config.name);
+                            }
+                        }
                     }
                     Err(e) => {
                         eprintln!("[{}] preview error: {e}", config.name);

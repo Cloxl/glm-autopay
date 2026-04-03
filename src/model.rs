@@ -17,8 +17,52 @@ pub struct PreviewRequest<'a> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewData {
-    pub biz_id: Option<String>,
+    pub product_id: Option<String>,
     pub sold_out: Option<bool>,
+    pub biz_id: Option<String>,
+    pub delay: Option<bool>,
+    pub effective_time: Option<String>,
+    pub original_amount: Option<f64>,
+    pub pay_amount: Option<f64>,
+    pub cash_amount: Option<f64>,
+    pub give_amount: Option<f64>,
+    pub third_party_amount: Option<f64>,
+    pub refund_amount: Option<f64>,
+    pub residual_amount: Option<f64>,
+    pub renew_amount: Option<f64>,
+    pub has_first_time_subscription_promo: Option<bool>,
+    pub renew: Option<bool>,
+    pub order_value_composition_feature_enabled: Option<bool>,
+    pub product_big_title: Option<String>,
+    pub product_small_title: Option<String>,
+    pub product_name: Option<String>,
+    pub product_introduction: Option<String>,
+    pub campaign_discount_details: Option<Vec<CampaignDiscountDetail>>,
+    pub refund_breakdown: Option<RefundBreakdown>,
+    pub last_subscription_summary: Option<LastSubscriptionSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CampaignDiscountDetail {
+    pub campaign_name: Option<String>,
+    pub apply_scene: Option<String>,
+    pub campaign_discount_amount: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefundBreakdown {
+    pub give_refund: Option<f64>,
+    pub cash_refund: Option<f64>,
+    pub third_party_refund: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastSubscriptionSummary {
+    pub product_id: Option<String>,
+    pub agreement_no: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

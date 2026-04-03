@@ -21,7 +21,7 @@ pub async fn poll_preview(
     config: &AppConfig,
     attempt_id: usize,
     success: &Arc<AtomicBool>,
-) -> AppResult<Option<String>> {
+) -> AppResult<Option<PreviewData>> {
     if success.load(Ordering::Relaxed) {
         return Ok(None);
     }
@@ -37,18 +37,16 @@ pub async fn poll_preview(
     let resp: ApiResponse<PreviewData> = client.post_json(&url, &payload).await?;
     let cost_ms = start.elapsed().as_millis();
 
-    let data = resp.data.as_ref();
-    let biz_id = data.and_then(|d| d.biz_id.as_deref());
-    let sold_out = data.and_then(|d| d.sold_out).unwrap_or(true);
+    let data = resp.data;
+    let biz_id = data.as_ref().and_then(|d| d.biz_id.as_deref());
+    let sold_out = data.as_ref().and_then(|d| d.sold_out).unwrap_or(true);
 
     let now = chrono::Local::now().format("%H:%M:%S%.3f");
     let status = if sold_out { "sold out" } else { "in stock" };
     println!("[{now}] {} #{attempt_id} | {status} | bizId: {biz_id:?} | {cost_ms}ms", config.name);
 
-    if let Some(id) = biz_id {
-        if !sold_out && !success.swap(true, Ordering::SeqCst) {
-            return Ok(Some(id.to_string()));
-        }
+    if biz_id.is_some() && !sold_out && !success.swap(true, Ordering::SeqCst) {
+        return Ok(data);
     }
 
     Ok(None)
@@ -80,22 +78,46 @@ pub async fn create_sign(client: &ApiClient, config: &AppConfig, biz_id: &str) -
 }
 
 /// 生成 pay-middle-page URL 并保存二维码图片
-pub fn pay_middle(config: &AppConfig, biz_id: &str) {
+pub fn pay_middle(config: &AppConfig, preview: &PreviewData) {
+    println!("\n[{}] preview data: {:#?}", config.name, preview);
+
+    let biz_id = preview.biz_id.as_deref().unwrap_or("");
     let pay_type = match config.pay_type.as_str() {
         "ALI" => "alipay",
         "WE_CHAT" => "wechat",
         other => other,
     };
 
+    // amount: 优先 thirdPartyAmount，回退 payAmount
+    let amount = preview
+        .third_party_amount
+        .or(preview.pay_amount)
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+
+    let old_product_id = preview
+        .last_subscription_summary
+        .as_ref()
+        .and_then(|s| s.product_id.as_deref())
+        .unwrap_or("")
+        .to_string();
+
+    let agreement_no = preview
+        .last_subscription_summary
+        .as_ref()
+        .and_then(|s| s.agreement_no.as_deref())
+        .unwrap_or("")
+        .to_string();
+
     let info = PayMiddleInfo {
         product_id: config.product_id.clone(),
-        product_name: String::new(),
-        amount: String::new(),
+        product_name: preview.product_name.clone().unwrap_or_default(),
+        amount,
         customer_id: config.customer_id.clone(),
-        customer_name: String::new(),
-        old_product_id: String::new(),
-        agreement_no: String::new(),
-        is_subscribe: false,
+        customer_name: config.name.clone(),
+        old_product_id,
+        agreement_no,
+        is_subscribe: preview.renew.unwrap_or(false),
         biz_id: biz_id.to_string(),
         pay_type: pay_type.to_string(),
         user_state: "NORMAL".to_string(),
@@ -105,11 +127,14 @@ pub fn pay_middle(config: &AppConfig, biz_id: &str) {
     let json = serde_json::to_string(&info).expect("serialize PayMiddleInfo");
     let encrypted = aes_ecb_encrypt(&json);
     let encoded = urlencoding::encode(&encrypted);
-    let url = format!("https://www.bigmodel.cn/pay-middle-page?info={encoded}");
+
+    let url_www = format!("https://www.bigmodel.cn/pay-middle-page?info={encoded}");
+    let url_bare = format!("https://bigmodel.cn/pay-middle-page?info={encoded}");
 
     println!("\n{}", "=".repeat(50));
     println!("[{}] pay middle page ready!", config.name);
-    save_qrcode_image(&url, &config.name);
+    save_qrcode_image(&url_www, &format!("{}_www", config.name));
+    save_qrcode_image(&url_bare, &format!("{}_bare", config.name));
     println!("{}", "=".repeat(50));
 }
 
